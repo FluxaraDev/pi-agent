@@ -16,6 +16,7 @@ from pi_agent.llm import (
     Usage,
     estimate_cost,
     infer_provider,
+    model_supports_vision,
     to_anthropic_messages,
     to_openai_messages,
     to_openai_tools,
@@ -116,6 +117,26 @@ class TestOpenAITranslation:
         fn = wrapped[0]["function"]
         assert fn["name"] == "list_dir"
         assert fn["parameters"]["required"] == ["path"]
+
+    def test_image_block_uses_openai_data_url(self):
+        msgs = to_openai_messages(
+            "SYS",
+            [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is this?"},
+                    {"type": "image", "media_type": "image/png", "data": "aGk="},
+                ],
+            }],
+        )
+        image = msgs[1]["content"][1]
+        assert image["type"] == "image_url"
+        assert image["image_url"]["url"] == "data:image/png;base64,aGk="
+
+    def test_vision_capability_is_model_specific(self):
+        assert model_supports_vision("openai", "gpt-4o-mini")
+        assert model_supports_vision("gemini", "gemini-3.5-flash")
+        assert not model_supports_vision("groq", "llama-3.3-70b-versatile")
 
 
 class TestOpenAIStreaming:

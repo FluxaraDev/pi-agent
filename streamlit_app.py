@@ -20,6 +20,8 @@ from __future__ import annotations
 import sys
 import tempfile
 import base64
+import hashlib
+import json
 from pathlib import Path
 
 import streamlit as st
@@ -28,7 +30,14 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from pi_agent.agent import Agent  # noqa: E402
 from pi_agent.config import SYSTEM_PROMPT, AgentConfig  # noqa: E402
-from pi_agent.llm import PROVIDERS, Usage, build_provider, estimate_cost, list_models  # noqa: E402
+from pi_agent.llm import (  # noqa: E402
+    PROVIDERS,
+    Usage,
+    build_provider,
+    estimate_cost,
+    list_models,
+    model_supports_vision,
+)
 from pi_agent.sandbox import Sandbox  # noqa: E402
 from pi_agent.skills import build_system_prompt, load_skills  # noqa: E402
 from pi_agent.tools.registry import build_default_tools  # noqa: E402
@@ -71,6 +80,7 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+            @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap');
             :root { --flux-purple: #8b5cf6; --flux-magenta: #d000ff; --flux-ink: #050308;
                 --flux-panel: #0d0914; --flux-text: #f6f3ff; --flux-muted: #aaa3b8; }
       #MainMenu, footer { visibility: hidden; }
@@ -100,9 +110,15 @@ st.markdown(
                 color:#d9c8ff; white-space:nowrap; }
             .flux-brand { display:flex; flex-direction:column; align-items:center; gap:.75rem; }
             .flux-brand img { width:min(132px, 32vw); height:auto; border-radius:24px; }
-            .flux-wordmark { font-family:"Avenir Next", "Segoe UI", sans-serif; font-size:clamp(2rem, 7vw, 3.45rem);
-                line-height:1; font-weight:800; letter-spacing:.16em; color:#fff; text-align:center; }
+                        .flux-wordmark { font-family:"Fredoka One", "Trebuchet MS", sans-serif; font-size:2.7rem;
+                                line-height:1.1; font-weight:400; letter-spacing:.08em; color:#fff; text-align:center; }
             .flux-wordmark span { color:var(--flux-magenta); }
+                        @media (max-width: 600px) {
+                            .block-container { padding: 1rem .75rem 6rem; }
+                            .flux-wordmark { font-size:1.5rem; letter-spacing:.05em; }
+                            .flux-brand img { width:96px; border-radius:18px; }
+                            .pill { font-size:.7rem; padding:.18rem .45rem; }
+                        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -150,23 +166,59 @@ _LANG_BY_EXT = {
     ".css": "css",
 }
 _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif"}
+_IMAGE_UPLOAD_TYPES = ["png", "jpg", "jpeg", "gif", "webp"]
 _ARTIFACT_EXTS = {".pptx", ".pdf", ".docx", ".xlsx"}
 _MAX_VIEW_BYTES = 200_000
 
 
-def _render_workspace_browser() -> None:
-    """Always-available view of every workspace file (uploaded or agent-made).
+def _message_content(message: dict) -> str | list[dict]:
+    """Build provider-neutral content from one visible chat message."""
+    images = message.get("images", [])
+    if not images:
+        return message["content"]
+    return [{"type": "text", "text": message["content"]}, *images]
 
-    Rendered last so files created during *this* turn are already visible —
-    pick a file to read it with syntax highlighting, or download it.
-    """
+
+def _sync_agent_history() -> None:
+    """Keep the model transcript aligned with the editable visible transcript."""
+    agent = st.session_state.get("agent")
+    if agent is not None:
+        agent.messages = [
+            {"role": message["role"], "content": _message_content(message)}
+            for message in st.session_state.get("messages", [])
+        ]
+
+
+def _chat_snapshot() -> str:
+    return json.dumps(st.session_state.get("messages", []), indent=2)
+
+
+def _render_message(message: dict, index: int) -> None:
+    """Render a message plus an edit control that never calls the model."""
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        for image in message.get("images", []):
+            st.image(base64.b64decode(image["data"]), caption=image.get("name", "Attached image"))
+        with st.expander("Edit message" if message["role"] == "user" else "Edit response"):
+            with st.form(f"edit_message_{index}"):
+                edited = st.text_area("Text", value=message["content"], key=f"edit_text_{index}")
+                if st.form_submit_button("Save edit"):
+                    st.session_state.messages[index]["content"] = edited
+                    st.session_state.edit_notice = (
+                        "Saved. FLUX will use this edited message as context on the next turn."
+                    )
+                    st.rerun()
+
+
+def _render_workspace_browser() -> None:
+    """Show every workspace file and allow safe text edits in place."""
     root = Path(_sandbox_dir())
     files = sorted(p for p in root.rglob("*") if p.is_file())
     if not files:
         return
     rels = [str(p.relative_to(root)) for p in files]
     has_artifact = any(p.suffix.lower() in _ARTIFACT_EXTS for p in files)
-    with st.expander(f"🗂️ Workspace files ({len(rels)}) — view & download", expanded=has_artifact):
+    with st.expander(f"🗂️ Workspace files ({len(rels)}) — view, edit & download", expanded=has_artifact):
         sel = st.selectbox("File", rels, key="wb_file")
         path = root / sel
         st.download_button(
@@ -182,7 +234,13 @@ def _render_workspace_browser() -> None:
             st.caption(f"{path.stat().st_size:,} bytes — too large to preview, download instead.")
         else:
             try:
-                st.code(path.read_text(encoding="utf-8"), language=_LANG_BY_EXT.get(suffix, "text"))
+                text = path.read_text(encoding="utf-8")
+                with st.form(f"wb_edit_{sel}"):
+                    edited = st.text_area("Contents", value=text, height=320, key=f"wb_text_{sel}")
+                    if st.form_submit_button("Save file"):
+                        path.write_text(edited, encoding="utf-8")
+                        st.success(f"Saved {sel}")
+                        st.rerun()
             except UnicodeDecodeError:
                 st.caption("Binary file — download instead.")
 
@@ -196,6 +254,8 @@ def _render_plan(box, steps) -> None:
     if rows:
         box.markdown("**📋 Plan**\n\n" + "\n\n".join(rows))
 
+
+st.session_state.setdefault("messages", [])
 
 # ── Sidebar: provider, model, key, upload, controls ──────────────────────────
 with st.sidebar:
@@ -239,6 +299,7 @@ with st.sidebar:
         if _picked == _CUSTOM
         else _picked
     )
+    vision_enabled = model_supports_vision(provider, model)
 
     use_skills = st.toggle("Use skills (plan, tests, review, debug, …)", value=True)
 
@@ -250,41 +311,77 @@ with st.sidebar:
     )
     if uploaded is not None:
         ext = uploaded.name.lower().rsplit(".", 1)[-1]
-        if ext == "zip":
-            res = extract_zip_into_sandbox(uploaded.getvalue(), Sandbox(_sandbox_dir()))
-            if res.error:
-                st.warning(res.error)
-            else:
-                st.success(
-                    f"Extracted **{len(res.extracted)}** files — ask me to *explain this project*."
-                )
-                if res.skipped:
-                    st.caption(f"Skipped {len(res.skipped)} (limits / unsafe paths).")
-        elif ext in DATA_EXTS:
-            if uploaded.size > 10_000_000:
-                st.warning("Data file too large (>10 MB).")
+        upload_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
+        if st.session_state.get("last_upload_hash") != upload_hash:
+            st.session_state.last_upload_hash = upload_hash
+            if ext == "zip":
+                res = extract_zip_into_sandbox(uploaded.getvalue(), Sandbox(_sandbox_dir()))
+                if res.error:
+                    st.warning(res.error)
+                else:
+                    st.success(
+                        f"Extracted **{len(res.extracted)}** files — contents are available below."
+                    )
+                    if res.skipped:
+                        st.caption(f"Skipped {len(res.skipped)} (limits / unsafe paths).")
+            elif ext in DATA_EXTS:
+                if uploaded.size > 10_000_000:
+                    st.warning("Data file too large (>10 MB).")
+                else:
+                    dest = Path(_sandbox_dir()) / Path(uploaded.name).name
+                    try:
+                        dest.write_bytes(uploaded.getvalue())
+                        st.success(f"Uploaded **{dest.name}** — ask FLUX to analyze it.")
+                    except OSError:
+                        st.warning("Could not save that file.")
+            elif uploaded.size > 200_000:
+                st.warning("File too large (>200 KB). Zip it and upload as a project instead.")
             else:
                 dest = Path(_sandbox_dir()) / Path(uploaded.name).name
                 try:
                     dest.write_bytes(uploaded.getvalue())
-                    st.success(
-                        f"Uploaded **{dest.name}** — ask me to *analyze it* (and make slides)."
-                    )
+                    st.success(f"Uploaded **{dest.name}** — ask FLUX to review it.")
                 except OSError:
                     st.warning("Could not save that file.")
-        elif uploaded.size > 200_000:
-            st.warning("File too large (>200 KB). Zip it and upload as a project instead.")
-        else:
-            dest = Path(_sandbox_dir()) / Path(uploaded.name).name  # strip any path
-            try:
-                dest.write_bytes(uploaded.getvalue())
-                st.success(f"Uploaded **{dest.name}** — ask me to review it.")
-            except OSError:
-                st.warning("Could not save that file.")
+
+    if vision_enabled:
+        image_upload = st.file_uploader(
+            "🖼️ Attach image to next message",
+            type=_IMAGE_UPLOAD_TYPES,
+            accept_multiple_files=True,
+            help="Enabled because the selected model supports image input.",
+            key="image_upload",
+        )
+        st.caption("Images are sent only with your next FLUX message.")
+    else:
+        image_upload = []
+        st.caption("Image input is unavailable for this model.")
+
+    st.markdown("---")
+    chat_name = st.text_input("Chat name", value="My FLUX chat")
+    if st.session_state.messages and st.button("💾 Save chat", use_container_width=True):
+        safe_name = "".join(c for c in chat_name.strip() if c.isalnum() or c in "-_ ").strip()
+        if safe_name:
+            chat_dir = Path(_sandbox_dir()) / ".flux_chats"
+            chat_dir.mkdir(exist_ok=True)
+            (chat_dir / f"{safe_name}.json").write_text(_chat_snapshot(), encoding="utf-8")
+            st.success(f"Saved **{safe_name}**")
+    saved_chats = sorted((Path(_sandbox_dir()) / ".flux_chats").glob("*.json")) if (Path(_sandbox_dir()) / ".flux_chats").exists() else []
+    if saved_chats:
+        selected_chat = st.selectbox("Saved chats", [p.stem for p in saved_chats])
+        if st.button("↩ Load chat", use_container_width=True):
+            loaded_path = next(p for p in saved_chats if p.stem == selected_chat)
+            st.session_state.messages = json.loads(loaded_path.read_text(encoding="utf-8"))
+            st.session_state.preserve_messages = True
+            st.rerun()
+
+    if st.session_state.get("edit_notice"):
+        st.caption(st.session_state.pop("edit_notice"))
 
     if st.button("🧹 Clear conversation", use_container_width=True):
         for k in ("messages", "agent", "agent_key", "sess_in", "sess_out"):
             st.session_state.pop(k, None)
+        st.session_state.messages = []
         st.rerun()
 
     if st.session_state.get("messages"):
@@ -292,9 +389,16 @@ with st.sidebar:
             f"**{m['role']}**:\n\n{m['content']}" for m in st.session_state.messages
         )
         st.download_button(
-            "💬 Download chat (.md)",
+            "💬 Export chat (.md)",
             _transcript,
             file_name="flux-ai-playground-chat.md",
+            use_container_width=True,
+        )
+        st.download_button(
+            "🗃️ Export chat JSON",
+            _chat_snapshot(),
+            file_name="flux-ai-playground-chat.json",
+            mime="application/json",
             use_container_width=True,
         )
 
@@ -354,6 +458,7 @@ if spec.requires_key and not api_key:
         "utils.py, then add a test.”* Or upload a project **.zip** and ask me to "
         "*explain this project*."
     )
+    _render_workspace_browser()
     st.stop()
 
 
@@ -384,16 +489,16 @@ def _get_agent() -> Agent:
         )
         st.session_state.agent = agent
         st.session_state.agent_key = fingerprint
-        st.session_state.messages = []
+        if not st.session_state.pop("preserve_messages", False):
+            st.session_state.messages = []
     return st.session_state.agent
 
 
 agent = _get_agent()
 st.session_state.setdefault("messages", [])
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+for _index, msg in enumerate(st.session_state.messages):
+    _render_message(msg, _index)
 
 # Starter prompts — shown only on an empty conversation, so a first-time
 # visitor can click once instead of inventing a prompt.
@@ -423,9 +528,21 @@ prompt = st.session_state.pop("queued_prompt", None) or st.chat_input(
     "Ask FLUX to plan, write, review, or edit code…"
 )
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    image_blocks = [
+        {
+            "type": "image",
+            "data": base64.b64encode(image.getvalue()).decode(),
+            "media_type": image.type,
+            "name": image.name,
+        }
+        for image in image_upload
+    ]
+    st.session_state.messages.append({"role": "user", "content": prompt, "images": image_blocks})
+    _sync_agent_history()
     with st.chat_message("user"):
         st.markdown(prompt)
+        for image in image_blocks:
+            st.image(base64.b64decode(image["data"]), caption=image["name"])
 
     # Tell the model what's already in its workspace (uploaded files / extracted
     # projects), so weaker tool-users don't have to discover files. rglob so files
@@ -438,10 +555,16 @@ if prompt:
         more = (
             f" (+{len(all_files) - len(workspace)} more)" if len(all_files) > len(workspace) else ""
         )
-        effective_prompt = (
+        workspace_note = (
             f"(Files in your working directory: {', '.join(workspace)}{more}. "
-            "Use read_file / list_dir to open them before reviewing or editing.)\n\n" + prompt
+            "Use read_file / list_dir to open them before reviewing or editing.)\n\n"
         )
+        effective_prompt = workspace_note + prompt
+    if image_blocks:
+        effective_prompt = [
+            {"type": "text", "text": effective_prompt},
+            *image_blocks,
+        ]
 
     # Route the most relevant skills for THIS prompt (token saver on free tiers);
     # the index of all skills stays in the prompt so the model knows the rest.
@@ -483,7 +606,7 @@ if prompt:
             status.update(label="done", state="complete", expanded=False)
             answer_box.markdown(answer or "_(no text response)_")
             st.session_state.messages.append(
-                {"role": "assistant", "content": answer or "_(no text response)_"}
+                {"role": "assistant", "content": answer or "_(no text response)_", "images": []}
             )
         except Exception as exc:  # provider error body has no key; scrub anyway, to be safe
             status.update(label="error", state="error")

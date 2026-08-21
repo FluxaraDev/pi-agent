@@ -114,7 +114,7 @@ def estimate_cost(model: str, usage: Usage) -> float | None:
 
 # --- neutral transcript -> provider wire formats ---------------------------
 # A neutral message is one of:
-#   {"role": "user", "content": str}
+#   {"role": "user", "content": str | list[dict[str, Any]]}
 #   {"role": "assistant", "content": str, "tool_calls": list[ToolCall]}
 #   {"role": "tool", "results": list[ToolResult]}
 
@@ -127,7 +127,23 @@ def to_anthropic_messages(messages: list[NeutralMessage]) -> list[dict[str, Any]
     for msg in messages:
         role = msg["role"]
         if role == "user":
-            out.append({"role": "user", "content": msg["content"]})
+            content = msg["content"]
+            if isinstance(content, list):
+                blocks = [{"type": "text", "text": block["text"]} for block in content if block["type"] == "text"]
+                blocks.extend(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": block["media_type"],
+                            "data": block["data"],
+                        },
+                    }
+                    for block in content
+                    if block["type"] == "image"
+                )
+                content = blocks
+            out.append({"role": "user", "content": content})
         elif role == "assistant":
             blocks: list[dict[str, Any]] = []
             if msg.get("content"):
@@ -156,7 +172,20 @@ def to_openai_messages(system: str, messages: list[NeutralMessage]) -> list[dict
     for msg in messages:
         role = msg["role"]
         if role == "user":
-            out.append({"role": "user", "content": msg["content"]})
+            content = msg["content"]
+            if isinstance(content, list):
+                content = [
+                    {"type": "text", "text": block["text"]}
+                    if block["type"] == "text"
+                    else {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{block['media_type']};base64,{block['data']}"
+                        },
+                    }
+                    for block in content
+                ]
+            out.append({"role": "user", "content": content})
         elif role == "assistant":
             # Some OpenAI-compatible servers (e.g. Groq) reject ``content: null``
             # on an assistant message; an empty string is accepted everywhere.
@@ -176,6 +205,18 @@ def to_openai_messages(system: str, messages: list[NeutralMessage]) -> list[dict
             for r in msg["results"]:
                 out.append({"role": "tool", "tool_call_id": r.id, "content": r.output})
     return out
+
+
+def model_supports_vision(provider: str, model: str) -> bool:
+    """Return whether a selected provider/model accepts image content blocks."""
+    model_id = model.lower()
+    if provider in {"anthropic", "gemini"}:
+        return True
+    if provider == "openai":
+        return any(token in model_id for token in ("gpt-4o", "gpt-4.1", "o1", "o3", "o4"))
+    # OpenAI-compatible catalogs are user-selectable and often expose vision
+    # models under names such as *vl*, *vision*, or *gemma-3*.
+    return any(token in model_id for token in ("vision", "-vl", "/vl", "gemma-3", "qwen2.5-vl"))
 
 
 def to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
