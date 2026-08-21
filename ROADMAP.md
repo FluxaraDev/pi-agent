@@ -2,7 +2,7 @@
 
 Where pi-agent is going. The philosophy stays fixed — minimal, transparent,
 provider-neutral, sandboxed — while the agent gets materially smarter each
-release. Issues and PRs against any item are welcome.
+release. Issues and PRs against any item are welcome..
 
 ## Shipped
 
