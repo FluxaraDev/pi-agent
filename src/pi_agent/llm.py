@@ -280,7 +280,7 @@ class AnthropicProvider:
         return not self.thinking
 
     def _request_kwargs(
-        self, system: str, messages: list[NeutralMessage], tools: list[dict[str, Any]]
+        self, system: str, messages: list[NeutralMessage], tools: list[dict[str, Any]], temperature: float = 1.0
     ) -> dict[str, Any]:
         max_tokens = self.max_tokens
         kwargs: dict[str, Any] = {
@@ -289,6 +289,7 @@ class AnthropicProvider:
             "system": system,
             "messages": to_anthropic_messages(messages),
             "tools": tools,
+            "temperature": temperature,
         }
         if self.thinking:
             # max_tokens must exceed the thinking budget.
@@ -311,9 +312,9 @@ class AnthropicProvider:
         return "".join(text_parts), tool_calls
 
     def complete(
-        self, system: str, messages: list[NeutralMessage], tools: list[dict[str, Any]]
+        self, system: str, messages: list[NeutralMessage], tools: list[dict[str, Any]], temperature: float = 1.0
     ) -> AssistantResponse:
-        response = self._client.messages.create(**self._request_kwargs(system, messages, tools))
+        response = self._client.messages.create(**self._request_kwargs(system, messages, tools, temperature))
         text, tool_calls = self._parse(response.content)
         return AssistantResponse(
             text=text,
@@ -328,9 +329,10 @@ class AnthropicProvider:
         messages: list[NeutralMessage],
         tools: list[dict[str, Any]],
         on_delta: DeltaCallback,
+        temperature: float = 1.0,
     ) -> AssistantResponse:
         """Stream text deltas via ``on_delta``; return the full normalised turn."""
-        kwargs = self._request_kwargs(system, messages, tools)
+        kwargs = self._request_kwargs(system, messages, tools, temperature)
         with self._client.messages.stream(**kwargs) as stream:
             for chunk in stream.text_stream:
                 on_delta(chunk)

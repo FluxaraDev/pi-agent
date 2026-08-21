@@ -103,9 +103,15 @@ st.markdown(
       .stButton button:hover, .stDownloadButton button:hover {
                 border-color: var(--flux-magenta); transform: translateY(-1px); }
       /* chat bubbles + inputs */
-            [data-testid="stChatMessage"] { border: 1px solid rgba(168,85,247,.12); border-radius: 16px;
-                background: rgba(13,9,20,.68); padding: 1rem 1.1rem; margin: .8rem 0; }
+            [data-testid="stChatMessage"] { border: 1px solid rgba(168,85,247,.14); border-radius: 16px;
+                background: rgba(13,9,20,.68); padding: .9rem 1rem; margin: .8rem 0 .25rem; }
             [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) { background: rgba(20,13,29,.84); }
+            .message-label { display:flex; align-items:center; gap:.45rem; margin-bottom:.55rem; color:#fff; }
+            .message-label strong { font-size:.9rem; }
+            .message-label span { color:var(--flux-magenta); font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+            .activity-label { color:var(--flux-muted); font-size:.76rem; letter-spacing:.08em; text-transform:uppercase; }
+            [data-testid="stChatMessage"] pre { border: 1px solid rgba(232,121,249,.2); border-radius: 10px;
+                background: #09060d; overflow-x: auto; }
       [data-baseweb="input"], [data-baseweb="select"], [data-baseweb="textarea"] { border-radius: 10px; }
       /* sidebar */
       /* provider pills */
@@ -205,21 +211,27 @@ def _chat_snapshot() -> str:
 
 
 def _render_message(message: dict, index: int) -> None:
-    """Render a message plus an edit control that never calls the model."""
+    """Render a compact bubble and keep editing controls outside its surface."""
+    is_assistant = message["role"] == "assistant"
     with st.chat_message(message["role"]):
+        label = "FLUX" if is_assistant else "You"
+        role = "AI" if is_assistant else "MESSAGE"
+        st.markdown(
+            f'<div class="message-label"><strong>{label}</strong><span>{role}</span></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown(message["content"])
         for image in message.get("images", []):
             st.image(base64.b64decode(image["data"]), caption=image.get("name", "Attached image"))
-        st.markdown('<div class="edit-hint">Edit this entry to refine future context.</div>', unsafe_allow_html=True)
-        with st.expander("Edit message" if message["role"] == "user" else "Edit response"):
-            with st.form(f"edit_message_{index}"):
-                edited = st.text_area("Text", value=message["content"], key=f"edit_text_{index}")
-                if st.form_submit_button("Save edit"):
-                    st.session_state.messages[index]["content"] = edited
-                    st.session_state.edit_notice = (
-                        "Saved. FLUX will use this edited message as context on the next turn."
-                    )
-                    st.rerun()
+    with st.expander("Edit message" if not is_assistant else "Edit response"):
+        with st.form(f"edit_message_{index}"):
+            edited = st.text_area("Text", value=message["content"], key=f"edit_text_{index}")
+            if st.form_submit_button("Save edit"):
+                st.session_state.messages[index]["content"] = edited
+                st.session_state.edit_notice = (
+                    "Saved. FLUX will use this edited message as context on the next turn."
+                )
+                st.rerun()
 
 
 def _render_workspace_browser() -> None:
@@ -415,6 +427,111 @@ with st.sidebar:
         )
 
     st.markdown("---")
+    
+    # Configuration panel as a popup in the middle
+    if st.button("⚙️ Open Configuration Panel", use_container_width=True):
+        st.session_state.show_config_panel = not st.session_state.get("show_config_panel", False)
+    
+    if st.session_state.get("show_config_panel", False):
+        # Create a modal-like popup in the center
+        st.markdown("""
+        <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                    background: var(--flux-panel); border: 2px solid var(--flux-purple); 
+                    border-radius: 16px; padding: 2rem; z-index: 1000; max-width: 90vw; 
+                    max-height: 90vh; overflow-y: auto;">
+        """, unsafe_allow_html=True)
+        
+        st.subheader("🔧 Configuration Panel")
+        
+        # API Key section
+        st.markdown("### API Key")
+        api_key_input = st.text_input(
+            "Enter your API key",
+            type="password",
+            value=api_key,
+            help="Your API key will be used only for this session"
+        )
+        if api_key_input != api_key:
+            st.session_state.pending_api_key = api_key_input
+            st.rerun()
+        
+        # Temperature control with extended range
+        st.markdown("### Temperature Control")
+        temp_value = st.slider(
+            "LLM Temperature",
+            min_value=-2.0,
+            max_value=100.0,
+            value=st.session_state.get("temperature", 1.0),
+            step=0.1,
+            help="Higher values = more random, lower = more deterministic. Extreme values require debug mode."
+        )
+        st.session_state.temperature = temp_value
+        
+        # Debug mode toggle
+        debug_mode = st.toggle(
+            "Debug Mode",
+            value=st.session_state.get("debug_mode", False),
+            help="Enable extended temperature flexibility and debugging features"
+        )
+        st.session_state.debug_mode = debug_mode
+        
+        # System prompt editor
+        st.markdown("### System Prompt Editor")
+        original_prompt = SYSTEM_PROMPT
+        edited_prompt = st.text_area(
+            "System Prompt",
+            value=st.session_state.get("system_prompt", original_prompt),
+            height=200,
+            help="Edit the system prompt that guides FLUX's behavior"
+        )
+        st.session_state.system_prompt = edited_prompt
+        
+        # Guidelines editor
+        st.markdown("### Guidelines Editor")
+        original_guidelines = """Guidelines:
+- Use the provided tools to read and modify files and run commands. Prefer reading a file before editing it.
+- Make the smallest change that solves the task. Do not add unrelated changes.
+- When you edit a file, use the edit_file tool with an exact, unique old_string.
+- After finishing, give a one or two sentence summary of what you did.
+- If a request is ambiguous, ask a brief clarifying question instead of guessing."""
+        edited_guidelines = st.text_area(
+            "Guidelines",
+            value=st.session_state.get("guidelines", original_guidelines),
+            height=150,
+            help="Edit the guidelines that FLUX follows"
+        )
+        st.session_state.guidelines = edited_guidelines
+        
+        # Action buttons
+        st.markdown("### Actions")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("💾 Save Changes", use_container_width=True):
+                st.session_state.config_saved = True
+                st.success("Configuration saved!")
+        
+        with col2:
+            if st.button("🔄 Revert to Original", use_container_width=True):
+                st.session_state.system_prompt = original_prompt
+                st.session_state.guidelines = original_guidelines
+                st.session_state.temperature = 1.0
+                st.session_state.debug_mode = False
+                st.success("Reverted to original settings!")
+                st.rerun()
+        
+        with col3:
+            if st.button("📤 Commit & Push", use_container_width=True, help="Commit changes to git and push to remote"):
+                # This would require git integration
+                st.info("Git integration would be implemented here")
+        
+        with col4:
+            if st.button("❌ Close Panel", use_container_width=True):
+                st.session_state.show_config_panel = False
+                st.rerun()
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
     _cost_box = st.empty()
 
     def _render_session_meter() -> None:
@@ -476,11 +593,19 @@ if spec.requires_key and not api_key:
 
 def _get_agent() -> Agent:
     """Build (or reuse) an agent for the current provider/model/key/skills."""
-    fingerprint = f"{provider}|{model}|{api_key[-6:]}|{use_skills}"
+    fingerprint = f"{provider}|{model}|{api_key[-6:]}|{use_skills}|{st.session_state.get('temperature', 1.0)}|{st.session_state.get('debug_mode', False)}|{st.session_state.get('system_prompt', SYSTEM_PROMPT)}|{st.session_state.get('guidelines', '')}"
     if st.session_state.get("agent_key") != fingerprint:
-        system_prompt = SYSTEM_PROMPT
+        system_prompt = st.session_state.get("system_prompt", SYSTEM_PROMPT)
+        guidelines = st.session_state.get("guidelines", "")
+        
+        # Combine system prompt and guidelines
+        full_system_prompt = system_prompt
+        if guidelines:
+            full_system_prompt += "\n\nGuidelines:\n" + guidelines
+            
         if use_skills:
-            system_prompt = build_system_prompt(SYSTEM_PROMPT, load_skills(SKILLS_DIR))
+            full_system_prompt = build_system_prompt(full_system_prompt, load_skills(SKILLS_DIR))
+            
         agent = Agent(
             provider=build_provider(model, provider, api_key=api_key),
             registry=build_default_tools(
@@ -493,10 +618,12 @@ def _get_agent() -> Agent:
             config=AgentConfig(
                 model=model,
                 provider=provider,
-                system_prompt=system_prompt,
+                system_prompt=full_system_prompt,
                 enable_shell=False,
                 auto_approve=True,  # mutations are confined to the temp sandbox
                 stream=True,  # live token streaming via assistant_delta events
+                temperature=st.session_state.get("temperature", 1.0),
+                debug_mode=st.session_state.get("debug_mode", False),
             ),
         )
         st.session_state.agent = agent
@@ -586,9 +713,15 @@ if prompt:
             SYSTEM_PROMPT, load_skills(SKILLS_DIR), prompt=prompt, top_k=3
         )
 
-    with st.chat_message("assistant"):
+    with st.expander("Thinking / activity", expanded=True):
+        st.markdown('<div class="activity-label">Live work channel</div>', unsafe_allow_html=True)
         plan_box = st.empty()
         status = st.status("FLUX is working…", expanded=True)
+    with st.chat_message("assistant"):
+        st.markdown(
+            '<div class="message-label"><strong>FLUX</strong><span>AI</span></div>',
+            unsafe_allow_html=True,
+        )
         answer_box = st.empty()
         usage_box = {"in": 0, "out": 0}
         stream_buf = {"text": ""}

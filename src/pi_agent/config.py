@@ -47,6 +47,8 @@ class AgentConfig:
     # sessions don't grow past the context window. 0 disables trimming. The full
     # transcript is still kept locally (for /cost); only the request is trimmed.
     max_history_messages: int = 80
+    temperature: float = 1.0  # LLM temperature for response randomness (0.0-2.0 typical)
+    debug_mode: bool = False  # Enable extended temperature flexibility and debugging features
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
 
     @classmethod

@@ -158,10 +158,16 @@ class Agent:
                 messages,
                 tools,
                 lambda delta: self._emit("assistant_delta", delta),
+                temperature=self.config.temperature,
             )
             return response, True
         response = self._with_retry(
-            lambda: self.provider.complete(self.config.system_prompt, messages, tools)
+            lambda: self.provider.complete(
+                self.config.system_prompt, 
+                messages, 
+                tools,
+                temperature=self.config.temperature
+            )
         )
         return response, False
 
