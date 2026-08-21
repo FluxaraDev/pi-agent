@@ -1,4 +1,4 @@
-"""pi-agent — public web demo (bring your own API key).
+"""FLUX AI PLAYGROUND — public web demo (bring your own API key).
 
 A safe, hosted slice of pi: chat with the agent and watch it plan, then use file
 tools in an isolated per-session workspace.
