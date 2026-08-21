@@ -218,7 +218,7 @@ class Agent:
         self.total_usage += sub.total_usage
         return result or "(sub-agent returned no text)"
 
-    def run(self, user_input: str) -> str:
+    def run(self, user_input: str | list[dict[str, Any]]) -> str:
         """Process one user turn; returns the final assistant text.
 
         With ``config.reflect`` on, a successful answer is followed by one
@@ -248,7 +248,7 @@ class Agent:
             self.config.max_iterations = saved_iters
         return reviewed or answer
 
-    def _loop(self, user_input: str) -> str:
+    def _loop(self, user_input: str | list[dict[str, Any]]) -> str:
         """The tool-use loop for one user message."""
         self.messages.append({"role": "user", "content": user_input})
         tools = self.registry.schemas()

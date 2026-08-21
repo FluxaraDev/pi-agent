@@ -81,16 +81,18 @@ st.markdown(
     """
     <style>
             @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap');
-            :root { --flux-purple: #8b5cf6; --flux-magenta: #d000ff; --flux-ink: #050308;
-                --flux-panel: #0d0914; --flux-text: #f6f3ff; --flux-muted: #aaa3b8; }
+            :root { --flux-purple: #a855f7; --flux-magenta: #e879f9; --flux-ink: #050308;
+                --flux-panel: #0d0914; --flux-panel-raised: #140d1d; --flux-text: #f6f3ff;
+                --flux-muted: #aaa3b8; }
       #MainMenu, footer { visibility: hidden; }
       /* never hide the sidebar open/close control */
       [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"],
       [data-testid="stSidebarCollapseButton"], [data-testid="stExpandSidebarButton"] {
         visibility: visible !important; }
-            .stApp { background: var(--flux-ink); color: var(--flux-text); }
-            .block-container { padding-top: 2.2rem; padding-bottom: 7rem; max-width: 840px; }
-            [data-testid="stSidebar"] { background: #08050c; border-right: 1px solid rgba(139,92,246,.2); }
+            .stApp { background: radial-gradient(circle at 50% -12%, #241035 0, var(--flux-ink) 42rem); color: var(--flux-text); }
+            .block-container { padding: 2.8rem clamp(.75rem, 4vw, 3rem) 7rem; max-width: 1180px; }
+            [data-testid="stSidebar"] { background: #08050c; border-right: 1px solid rgba(168,85,247,.24); }
+            [data-testid="stSidebar"] > div:first-child { padding: 1.5rem 1.1rem; }
             /* purple light line under the brand lockup */
       .hero-rule { height: 3px; border: 0; border-radius: 3px; margin: .4rem 0 1.4rem;
                 background: linear-gradient(90deg, var(--flux-magenta), var(--flux-purple), transparent); }
@@ -101,23 +103,32 @@ st.markdown(
       .stButton button:hover, .stDownloadButton button:hover {
                 border-color: var(--flux-magenta); transform: translateY(-1px); }
       /* chat bubbles + inputs */
-      [data-testid="stChatMessage"] { border-radius: 14px; }
+            [data-testid="stChatMessage"] { border: 1px solid rgba(168,85,247,.12); border-radius: 16px;
+                background: rgba(13,9,20,.68); padding: 1rem 1.1rem; margin: .8rem 0; }
+            [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) { background: rgba(20,13,29,.84); }
       [data-baseweb="input"], [data-baseweb="select"], [data-baseweb="textarea"] { border-radius: 10px; }
       /* sidebar */
       /* provider pills */
       .pill { display:inline-block; padding:.2rem .65rem; margin:.15rem .25rem; border-radius:999px;
                 font-size:.78rem; background:rgba(139,92,246,.14); border:1px solid rgba(208,0,255,.3);
                 color:#d9c8ff; white-space:nowrap; }
-            .flux-brand { display:flex; flex-direction:column; align-items:center; gap:.75rem; }
+            .flux-brand { display:flex; flex-direction:column; align-items:center; gap:.75rem; padding: 1rem 0 .5rem; }
             .flux-brand img { width:min(132px, 32vw); height:auto; border-radius:24px; }
                         .flux-wordmark { font-family:"Fredoka One", "Trebuchet MS", sans-serif; font-size:2.7rem;
                                 line-height:1.1; font-weight:400; letter-spacing:.08em; color:#fff; text-align:center; }
             .flux-wordmark span { color:var(--flux-magenta); }
+            .flux-kicker { color:var(--flux-magenta); font-size:.72rem; font-weight:700; letter-spacing:.16em;
+                text-transform:uppercase; }
+            .edit-hint { color:var(--flux-muted); font-size:.78rem; margin:.2rem 0 .7rem; }
+            [data-testid="stExpander"] { border-color: rgba(168,85,247,.18); background: rgba(13,9,20,.45); }
+            [data-testid="stFileUploader"] section { border-color: rgba(168,85,247,.34); background: rgba(20,13,29,.7); }
+            [data-testid="stChatInput"] { border-color: rgba(232,121,249,.42); background: var(--flux-panel-raised); }
                         @media (max-width: 600px) {
-                            .block-container { padding: 1rem .75rem 6rem; }
+                            .block-container { padding: 1rem .65rem 6rem; }
                             .flux-wordmark { font-size:1.5rem; letter-spacing:.05em; }
                             .flux-brand img { width:96px; border-radius:18px; }
                             .pill { font-size:.7rem; padding:.18rem .45rem; }
+                            [data-testid="stChatMessage"] { padding:.75rem; margin:.55rem 0; }
                         }
     </style>
     """,
@@ -199,6 +210,7 @@ def _render_message(message: dict, index: int) -> None:
         st.markdown(message["content"])
         for image in message.get("images", []):
             st.image(base64.b64decode(image["data"]), caption=image.get("name", "Attached image"))
+        st.markdown('<div class="edit-hint">Edit this entry to refine future context.</div>', unsafe_allow_html=True)
         with st.expander("Edit message" if message["role"] == "user" else "Edit response"):
             with st.form(f"edit_message_{index}"):
                 edited = st.text_area("Text", value=message["content"], key=f"edit_text_{index}")
@@ -350,7 +362,7 @@ with st.sidebar:
             type=_IMAGE_UPLOAD_TYPES,
             accept_multiple_files=True,
             help="Enabled because the selected model supports image input.",
-            key="image_upload",
+            key=f"image_upload_{st.session_state.get('image_upload_version', 0)}",
         )
         st.caption("Images are sent only with your next FLUX message.")
     else:
@@ -537,6 +549,7 @@ if prompt:
         }
         for image in image_upload
     ]
+    st.session_state.image_upload_version = st.session_state.get("image_upload_version", 0) + 1
     st.session_state.messages.append({"role": "user", "content": prompt, "images": image_blocks})
     _sync_agent_history()
     with st.chat_message("user"):
