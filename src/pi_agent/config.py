@@ -14,7 +14,7 @@ from pi_agent.guardrails import GuardrailConfig
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """\
-You are pi, a concise terminal coding assistant. You help the user write, edit, \
+You are FLUX, a concise terminal coding assistant. You help the user write, edit, \
 and understand code in their working directory.
 
 Guidelines:

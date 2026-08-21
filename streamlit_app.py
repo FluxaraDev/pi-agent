@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import base64
 from pathlib import Path
 
 import streamlit as st
@@ -34,6 +35,7 @@ from pi_agent.tools.registry import build_default_tools  # noqa: E402
 from pi_agent.upload import extract_zip_into_sandbox  # noqa: E402
 
 SKILLS_DIR = Path(__file__).parent / "skills"
+ASSETS_DIR = Path(__file__).parent / "TexturesAssets"
 STATUS_ICON = {"done": "✅", "in_progress": "⏳", "pending": "⬜"}
 UPLOAD_TYPES = [
     "zip",
@@ -60,8 +62,8 @@ UPLOAD_TYPES = [
 DATA_EXTS = {"csv", "tsv", "xlsx", "json"}
 
 st.set_page_config(
-    page_title="pi-agent — try it",
-    page_icon="🤖",
+    page_title="FLUX AI PLAYGROUND",
+    page_icon=str(ASSETS_DIR / "DarkModeLogo.png"),
     layout="centered",
     initial_sidebar_state="expanded",
 )
@@ -69,30 +71,38 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+            :root { --flux-purple: #8b5cf6; --flux-magenta: #d000ff; --flux-ink: #050308;
+                --flux-panel: #0d0914; --flux-text: #f6f3ff; --flux-muted: #aaa3b8; }
       #MainMenu, footer { visibility: hidden; }
       /* never hide the sidebar open/close control */
       [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"],
       [data-testid="stSidebarCollapseButton"], [data-testid="stExpandSidebarButton"] {
         visibility: visible !important; }
-      .block-container { padding-top: 2.2rem; padding-bottom: 7rem; max-width: 840px; }
-      /* gradient divider under the hero */
+            .stApp { background: var(--flux-ink); color: var(--flux-text); }
+            .block-container { padding-top: 2.2rem; padding-bottom: 7rem; max-width: 840px; }
+            [data-testid="stSidebar"] { background: #08050c; border-right: 1px solid rgba(139,92,246,.2); }
+            /* purple light line under the brand lockup */
       .hero-rule { height: 3px; border: 0; border-radius: 3px; margin: .4rem 0 1.4rem;
-        background: linear-gradient(90deg, #7c5cff, #22d3ee, transparent); }
+                background: linear-gradient(90deg, var(--flux-magenta), var(--flux-purple), transparent); }
       /* buttons */
       .stButton button, .stDownloadButton button {
-        border-radius: 10px; border: 1px solid rgba(124,92,255,.4); font-weight: 600;
+                border-radius: 10px; border: 1px solid rgba(139,92,246,.45); font-weight: 600;
         transition: transform .12s ease, border-color .12s ease; }
       .stButton button:hover, .stDownloadButton button:hover {
-        border-color: #7c5cff; transform: translateY(-1px); }
+                border-color: var(--flux-magenta); transform: translateY(-1px); }
       /* chat bubbles + inputs */
       [data-testid="stChatMessage"] { border-radius: 14px; }
       [data-baseweb="input"], [data-baseweb="select"], [data-baseweb="textarea"] { border-radius: 10px; }
       /* sidebar */
-      [data-testid="stSidebar"] { border-right: 1px solid rgba(255,255,255,.06); }
       /* provider pills */
       .pill { display:inline-block; padding:.2rem .65rem; margin:.15rem .25rem; border-radius:999px;
-        font-size:.78rem; background:rgba(124,92,255,.14); border:1px solid rgba(124,92,255,.3);
-        color:#cdb8ff; white-space:nowrap; }
+                font-size:.78rem; background:rgba(139,92,246,.14); border:1px solid rgba(208,0,255,.3);
+                color:#d9c8ff; white-space:nowrap; }
+            .flux-brand { display:flex; flex-direction:column; align-items:center; gap:.75rem; }
+            .flux-brand img { width:min(132px, 32vw); height:auto; border-radius:24px; }
+            .flux-wordmark { font-family:"Avenir Next", "Segoe UI", sans-serif; font-size:clamp(2rem, 7vw, 3.45rem);
+                line-height:1; font-weight:800; letter-spacing:.16em; color:#fff; text-align:center; }
+            .flux-wordmark span { color:var(--flux-magenta); }
     </style>
     """,
     unsafe_allow_html=True,
@@ -284,7 +294,7 @@ with st.sidebar:
         st.download_button(
             "💬 Download chat (.md)",
             _transcript,
-            file_name="pi-agent-chat.md",
+            file_name="flux-ai-playground-chat.md",
             use_container_width=True,
         )
 
@@ -308,19 +318,19 @@ with st.sidebar:
         "🔒 **Safe demo:** shell disabled, file tools sandboxed to a temporary "
         "per-session folder. Your key stays in your session."
     )
-    st.caption("[Source on GitHub](https://github.com/Ashutosh0428/pi-agent)")
+    st.caption("FLUX AI PLAYGROUND · [Source on GitHub](https://github.com/Ashutosh0428/pi-agent)")
 
 # ── Header ───────────────────────────────────────────────────────────────────
 st.markdown(
-    """
-    <div style="text-align:center;">
-      <div style="font-size:2.6rem; font-weight:800; letter-spacing:-.5px;
-           background:linear-gradient(90deg,#7c5cff,#22d3ee);
-           -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
-        🤖 pi-agent
-      </div>
+        f"""
+        <div class="flux-brand">
+            <picture>
+                <source media="(prefers-color-scheme: light)" srcset="data:image/png;base64,{base64.b64encode((ASSETS_DIR / 'LightModeLogo.png').read_bytes()).decode()}">
+                <img src="data:image/png;base64,{base64.b64encode((ASSETS_DIR / 'DarkModeLogo.png').read_bytes()).decode()}" alt="FLUX AI PLAYGROUND logo">
+            </picture>
+            <div class="flux-wordmark"><span>FLUX</span> AI PLAYGROUND</div>
       <div style="color:#9aa0aa; font-size:.97rem; margin-top:.3rem;">
-        A transparent AI coding agent — it <b>plans</b>, runs tools, and explains
+                A transparent AI playground — it <b>plans</b>, runs tools, and explains
         code &amp; data in a sandboxed workspace. Bring your own key (free options too).
       </div>
       <div style="margin-top:.7rem;">
@@ -410,7 +420,7 @@ if not st.session_state.messages:
 
 # ── Chat turn ────────────────────────────────────────────────────────────────
 prompt = st.session_state.pop("queued_prompt", None) or st.chat_input(
-    "Ask pi to plan, write, review, or edit code…"
+    "Ask FLUX to plan, write, review, or edit code…"
 )
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -442,7 +452,7 @@ if prompt:
 
     with st.chat_message("assistant"):
         plan_box = st.empty()
-        status = st.status("pi is working…", expanded=True)
+        status = st.status("FLUX is working…", expanded=True)
         answer_box = st.empty()
         usage_box = {"in": 0, "out": 0}
         stream_buf = {"text": ""}
